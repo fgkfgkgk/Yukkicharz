@@ -1,9 +1,7 @@
--- Мгновенный аимбот (Xeno Executor) — без плавности
--- Режимы: NPC | Игроки | Тимейты | Противники
-
+1
 local MAX_DISTANCE = 300
-local UPDATE_INTERVAL = 0.05   -- чаще проверяет цели
-local AIM_SMOOTHNESS = 0       -- мгновенно
+local UPDATE_INTERVAL = 0.05
+local AIM_SMOOTHNESS = 0
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -219,7 +217,7 @@ local function getTargetPart(model)
 end
 
 ------------------------------------------------
--- Поиск ближайшей цели
+-- Поиск цели (NPC: от меньшего роста к большему)
 ------------------------------------------------
 local function updateBestTarget()
 	bestTarget = nil
@@ -229,46 +227,80 @@ local function updateBestTarget()
 	if not localRoot then return end
 
 	local localTeam = LocalPlayer.Team
-	local closestDist = MAX_DISTANCE
 
-	for model, _ in pairs(targets) do
-		if not model or not model.Parent then
-			targets[model] = nil
-			continue
+	if targetMode == "NPC" then
+		-- Сортируем по реальному росту модели (bounding box): чем меньше рост, тем приоритетнее
+		local bestHeight = math.huge
+		for model, _ in pairs(targets) do
+			if not model or not model.Parent then
+				targets[model] = nil
+				continue
+			end
+			local humanoid = model:FindFirstChildOfClass("Humanoid")
+			if not humanoid or humanoid.Health <= 0 then
+				targets[model] = nil
+				continue
+			end
+			-- Пропускаем игроков в режиме NPC
+			if Players:GetPlayerFromCharacter(model) then continue end
+
+			local targetPart = getTargetPart(model)
+			if not targetPart then continue end
+
+			-- Проверка дистанции (чтобы не целиться в бесконечно далёких)
+			local root = model:FindFirstChild("HumanoidRootPart") or targetPart
+			local dist = (localRoot.Position - root.Position).Magnitude
+			if dist > MAX_DISTANCE then continue end
+
+			-- Реальная высота персонажа (размер ограничивающей рамки)
+			local height = model:GetExtentsSize().Y
+			if height <= 0 then continue end -- игнорируем некорректные модели
+
+			if height < bestHeight then
+				bestHeight = height
+				bestTarget = targetPart
+			end
 		end
-		local humanoid = model:FindFirstChildOfClass("Humanoid")
-		if not humanoid or humanoid.Health <= 0 then
-			targets[model] = nil
-			continue
-		end
-		local targetPart = getTargetPart(model)
-		if not targetPart then continue end
+	else
+		-- Остальные режимы: ближайшая цель
+		local closestDist = MAX_DISTANCE
+		for model, _ in pairs(targets) do
+			if not model or not model.Parent then
+				targets[model] = nil
+				continue
+			end
+			local humanoid = model:FindFirstChildOfClass("Humanoid")
+			if not humanoid or humanoid.Health <= 0 then
+				targets[model] = nil
+				continue
+			end
+			local targetPart = getTargetPart(model)
+			if not targetPart then continue end
 
-		local player = Players:GetPlayerFromCharacter(model)
-		local isPlayer = player ~= nil
+			local player = Players:GetPlayerFromCharacter(model)
+			local isPlayer = player ~= nil
 
-		if targetMode == "NPC" then
-			if isPlayer then continue end
-		elseif targetMode == "Players" then
-			if not isPlayer then continue end
-		elseif targetMode == "Teammates" then
-			if not isPlayer then continue end
-			if not localTeam or player.Team ~= localTeam then continue end
-		elseif targetMode == "Enemies" then
-			if not isPlayer then continue end
-			if localTeam and player.Team == localTeam then continue end
-		end
+			if targetMode == "Players" then
+				if not isPlayer then continue end
+			elseif targetMode == "Teammates" then
+				if not isPlayer then continue end
+				if not localTeam or player.Team ~= localTeam then continue end
+			elseif targetMode == "Enemies" then
+				if not isPlayer then continue end
+				if localTeam and player.Team == localTeam then continue end
+			end
 
-		local dist = (localRoot.Position - targetPart.Position).Magnitude
-		if dist < closestDist then
-			closestDist = dist
-			bestTarget = targetPart
+			local dist = (localRoot.Position - targetPart.Position).Magnitude
+			if dist < closestDist then
+				closestDist = dist
+				bestTarget = targetPart
+			end
 		end
 	end
 end
 
 ------------------------------------------------
--- Обновление цели
+-- Обновление цели с интервалом
 ------------------------------------------------
 task.spawn(function()
 	while true do
@@ -305,7 +337,6 @@ RunService.RenderStepped:Connect(function()
 
 		local camPos = camera.CFrame.Position
 		local targetPos = currentTarget.Position
-		-- Мгновенная установка
 		camera.CFrame = CFrame.lookAt(camPos, targetPos)
 	end
 end)
